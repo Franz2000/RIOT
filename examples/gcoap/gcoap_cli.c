@@ -26,6 +26,10 @@
 #include "net/gcoap.h"
 #include "od.h"
 #include "fmt.h"
+#include "periph/gpio.h"
+#include "board.h"
+#include "luid.h"
+#include "periph/hwrng.h"
 
 #define ENABLE_DEBUG 0
 #include "debug.h"
@@ -40,11 +44,19 @@ static void _resp_handler(const gcoap_request_memo_t *memo, coap_pkt_t* pdu,
                           const sock_udp_ep_t *remote);
 static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
 static ssize_t _riot_board_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
+static ssize_t _led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx, int pin);
+static ssize_t _green_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
+static ssize_t _blue_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
+static ssize_t _red_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx);
+
 
 /* CoAP resources. Must be sorted by path (ASCII order). */
 static const coap_resource_t _resources[] = {
     { "/cli/stats", COAP_GET | COAP_PUT, _stats_handler, NULL },
-    { "/riot/board", COAP_GET, _riot_board_handler, NULL },
+    { "/led/blue", COAP_GET | COAP_PUT, _blue_led_handler, NULL },
+    { "/led/green", COAP_GET | COAP_PUT, _green_led_handler, NULL },
+    { "/led/red", COAP_GET | COAP_PUT, _red_led_handler, NULL },
+    { "/riot/board", COAP_GET, _riot_board_handler, NULL }
 };
 
 static const char *_link_params[] = {
@@ -213,6 +225,87 @@ static ssize_t _stats_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *c
     return 0;
 }
 
+static ssize_t _green_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx){
+	return _led_handler(pdu, buf, len, ctx, 0);
+}
+
+static ssize_t _blue_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx){
+        return _led_handler(pdu, buf, len, ctx, 1);
+}
+
+static ssize_t _red_led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx){
+        return _led_handler(pdu, buf, len, ctx, 2);
+}
+
+static ssize_t _led_handler(coap_pkt_t* pdu, uint8_t *buf, size_t len, void *ctx, int pin){
+	(void)ctx;
+
+	/*read coap method type in packet*/
+	unsigned method_flag = coap_method2flag(coap_get_code_detail(pdu));
+
+	switch(method_flag){
+		case COAP_GET:
+			gcoap_resp_init(pdu, buf, len, COAP_CODE_CONTENT);
+			coap_opt_add_format(pdu, COAP_FORMAT_TEXT);
+			size_t resp_len = coap_opt_finish(pdu, COAP_OPT_FINISH_PAYLOAD);
+
+			/*Read pin status*/
+			char* pinStatus = 0;
+			switch(pin){
+                case 0:
+                        pinStatus = (gpio_read(LED0_PIN)) ? "1" : "0";
+                        break;
+                case 1:
+                        pinStatus = (gpio_read(LED1_PIN)) ? "1" : "0";
+                        break;
+                case 2:
+    pinStatus = (gpio_read(LED2_PIN)) ? "1" : "0";
+                        break;
+        }
+			/*Write pin status to Buffer*/
+			if(pdu->payload_len >= strlen(pinStatus)) {
+				memcpy(pdu->payload, pinStatus, strlen(pinStatus));
+				return resp_len + strlen(pinStatus);
+			}
+			else {
+				puts("gcoap_cli:msg buffer too small");
+				return gcoap_response(pdu, buf, len, COAP_CODE_INTERNAL_SERVER_ERROR);
+			}
+		case COAP_PUT:
+			if(*(pdu->payload) == '0'){
+				switch(pin){
+					case 0: 
+						gpio_write(LED0_PIN, 0);
+						break;
+					case 1:
+						gpio_write(LED1_PIN, 0);
+						break;
+					case 2: 
+						gpio_write(LED2_PIN, 0);
+						break;
+				}
+			}
+			else {
+				switch(pin){
+                                        case 0:
+                                                gpio_write(LED0_PIN, 1);
+						break;
+                                        case 1:
+                                                gpio_write(LED1_PIN, 1);
+						break;
+                                        case 2:
+                                                gpio_write(LED2_PIN, 1);
+						break;
+				}
+
+			}
+			return gcoap_response(pdu, buf, len, COAP_CODE_VALID);
+	}
+
+	return 0;
+}
+
+
 static ssize_t _riot_board_handler(coap_pkt_t *pdu, uint8_t *buf, size_t len, void *ctx)
 {
     (void)ctx;
@@ -317,7 +410,7 @@ int gcoap_cli_cmd(int argc, char **argv)
         uint8_t open_reqs = gcoap_op_state();
 
         printf("CoAP server is listening on port %u\n", CONFIG_GCOAP_PORT);
-        printf(" CLI requests sent: %u\n", req_count);
+        printf("CLI requests sent: %u\n", req_count);
         printf("CoAP open requests: %u\n", open_reqs);
         printf("Configured Proxy: ");
         if (_proxied) {
@@ -468,3 +561,21 @@ void gcoap_cli_init(void)
 {
     gcoap_register_listener(&_listener);
 }
+
+/* overrite the weak method because cc110 will map to the same address*/
+void cc1xxx_eui_get(const netdev_t *netdev, uint8_t *eui)
+{
+    hwrng_init();
+    uint8_t *rand = 0;
+    hwrng_read(rand, 1);
+    (void)netdev;
+    do {
+        luid_get(eui, 1);
+        for (size_t i = 0; i < sizeof(uint8_t); i++)
+        {
+            eui[i] = eui[i] * rand[i];
+        }
+    }
+    while (*eui == 0x00);
+}
+

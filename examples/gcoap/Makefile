@@ -13,6 +13,7 @@ RIOTBASE ?= $(CURDIR)/../..
 # NOTE: 6LoWPAN will be included if IEEE802.15.4 devices are present
 USEMODULE += gnrc_netdev_default
 USEMODULE += auto_init_gnrc_netif
+USEMODULE += stm32_eth_auto
 # Specify the mandatory networking modules
 USEMODULE += gnrc_ipv6_default
 USEMODULE += gcoap
@@ -26,6 +27,9 @@ USEMODULE += fmt
 USEMODULE += shell
 USEMODULE += shell_commands
 USEMODULE += ps
+
+#Use CC1101 Sub Gigahertz ISM Transceiver
+USEMODULE += cc1101
 
 # Comment this out to disable code in RIOT that does safety checking
 # which is not needed in a production environment but helps in the
@@ -68,3 +72,9 @@ ifndef CONFIG_KCONFIG_MODULE_GCOAP
 GCOAP_RESEND_BUFS_MAX ?= 2
 CFLAGS += -DCONFIG_GCOAP_RESEND_BUFS_MAX=$(GCOAP_RESEND_BUFS_MAX)
 endif
+CFLAGS += '-DCC110X_PARAM_CS=GPIO_PIN(PORT_D,14)'
+CFLAGS += '-DCC110X_PARAM_GDO0=GPIO_PIN(PORT_D,15)'
+CFLAGS += '-DCC110X_PARAM_GDO2=GPIO_PIN(PORT_F,12)'
+CFLAGS += '-DCC110X_PARAM_PATABLE=&cc110x_patable_433mhz'
+CFLAGS += '-DCC110X_PARAM_CONFIG=&cc110x_config_433mhz_250kbps_300khz'
+CFLAGS += '-DCC110X_PARAM_CHANNELS=&cc110x_chanmap_433mhz_300khz'
